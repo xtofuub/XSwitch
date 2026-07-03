@@ -1,0 +1,42 @@
+name: Dependency Smoke Check
+
+on:
+  pull_request:
+    paths:
+      - "**/package.json"
+      - "**/package-lock.json"
+      - "**/requirements*.txt"
+      - "**/pyproject.toml"
+      - "**/Pipfile"
+      - "**/go.mod"
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
+      - ".github/workflows/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: dependency-smoke-check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Check npm dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          dirs=('.')
+          for dir in "${dirs[@]}"; do
+            echo "::group::npm ${dir}"
+            cd "${GITHUB_WORKSPACE}/${dir}"
+            if [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then npm ci --ignore-scripts; else npm install --ignore-scripts; fi
+            if npm pkg get scripts.build >/tmp/build-script.json 2>/dev/null && ! grep -q '^{}$' /tmp/build-script.json; then npm run build; fi
+            echo "::endgroup::"
+          done

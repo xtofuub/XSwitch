@@ -1,0 +1,49 @@
+name: Dependabot Auto Merge
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: read
+
+jobs:
+  automerge:
+    name: merge-safe-dependabot-updates
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: "${{ secrets.GITHUB_TOKEN }}"
+
+      - name: Wait for smoke check and merge patch/minor update
+        if: ${{ contains(fromJSON('["version-update:semver-patch", "version-update:semver-minor"]'), steps.metadata.outputs.update-type) }}
+        env:
+          GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+          PR_URL: "${{ github.event.pull_request.html_url }}"
+          PR_SHA: "${{ github.event.pull_request.head.sha }}"
+        shell: bash
+        run: |
+          set -euo pipefail
+          status=""
+          conclusion=""
+          for i in {1..60}; do
+            status="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow "Dependency Smoke Check" --commit "$PR_SHA" --event pull_request --json status --jq '.[0].status // ""')"
+            conclusion="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow "Dependency Smoke Check" --commit "$PR_SHA" --event pull_request --json conclusion --jq '.[0].conclusion // ""')"
+            if [ "$status" = "completed" ]; then
+              if [ "$conclusion" = "success" ]; then break; fi
+              echo "Dependency Smoke Check finished with $conclusion" >&2
+              exit 1
+            fi
+            sleep 30
+          done
+          if [ "$status" != "completed" ]; then
+            echo "Timed out waiting for Dependency Smoke Check" >&2
+            exit 1
+          fi
+          gh pr merge "$PR_URL" --squash --delete-branch
